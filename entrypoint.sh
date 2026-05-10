@@ -1,5 +1,15 @@
 #!/bin/sh
 dir="$HOME/.nanobot"
+
+# When started as root (typical on managed platforms like Railway where
+# mounted volumes are owned by UID 0), fix ownership and drop privileges
+# to the nanobot user so the rest of the app runs unprivileged.
+if [ "$(id -u)" = "0" ]; then
+    mkdir -p "$dir"
+    chown -R 1000:1000 "$HOME"
+    exec gosu nanobot:nanobot nanobot "$@"
+fi
+
 if [ -d "$dir" ] && [ ! -w "$dir" ]; then
     owner_uid=$(stat -c %u "$dir" 2>/dev/null || stat -f %u "$dir" 2>/dev/null)
     cat >&2 <<EOF

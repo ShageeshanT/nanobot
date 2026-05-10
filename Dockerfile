@@ -38,7 +38,9 @@ RUN useradd -m -u 1000 -s /bin/bash nanobot && \
     chown -R nanobot:nanobot /home/nanobot /app
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh
+COPY railway-entrypoint.sh /usr/local/bin/railway-entrypoint.sh
+RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh /usr/local/bin/railway-entrypoint.sh && \
+    chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/railway-entrypoint.sh
 
 ENV HOME=/home/nanobot
 

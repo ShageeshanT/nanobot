@@ -4,13 +4,14 @@
 #   2. Drop to the nanobot user.
 #   3. If a WhatsApp session exists, start the Baileys bridge supervisor
 #      in the background so the gateway can reach it on ws://127.0.0.1:3001.
-#   4. If config + Codex OAuth token are present, exec `nanobot gateway`.
-#      Otherwise idle so the operator can SSH in and complete onboarding.
+#   4. If config.json is present (optionally seeded from $NANOBOT_CONFIG_JSON),
+#      exec `nanobot gateway`. Otherwise idle so the operator can SSH in and
+#      complete onboarding.
 
 set -e
 
 if [ "$(id -u)" = "0" ]; then
-    mkdir -p /home/nanobot/.nanobot/auth
+    mkdir -p /home/nanobot/.nanobot/auth /home/nanobot/.nanobot/claude
     chown -R 1000:1000 /home/nanobot
     exec gosu nanobot:nanobot "$0" "$@"
 fi
@@ -38,14 +39,30 @@ start_whatsapp_bridge() {
     echo "🐈 nanobot: bridge supervisor pid=$!"
 }
 
-if [ -f "$CONFIG" ] && [ -f "$TOKEN" ]; then
+# First-boot convenience: materialize config.json from a NANOBOT_CONFIG_JSON
+# env var (handy on Railway, where config lives in variables rather than on the
+# volume). Never clobber an existing config written by onboarding.
+if [ ! -f "$CONFIG" ] && [ -n "$NANOBOT_CONFIG_JSON" ]; then
+    echo "🐈 nanobot: writing config.json from \$NANOBOT_CONFIG_JSON..."
+    mkdir -p "$(dirname "$CONFIG")"
+    printf '%s' "$NANOBOT_CONFIG_JSON" > "$CONFIG"
+fi
+
+# Start the gateway as soon as a config exists. The Codex OAuth token is only
+# needed by the openai-codex provider, so it must not gate Anthropic/MiniMax or
+# Claude-subscription deployments.
+if [ -f "$CONFIG" ]; then
     start_whatsapp_bridge
-    echo "🐈 nanobot: config + Codex token present, starting gateway..."
+    if [ -f "$TOKEN" ]; then
+        echo "🐈 nanobot: config + Codex token present, starting gateway..."
+    else
+        echo "🐈 nanobot: config present, starting gateway..."
+    fi
     exec nanobot gateway
 fi
 
-echo "🐈 nanobot: waiting for first-time setup."
-echo "   Missing: $([ ! -f "$CONFIG" ] && echo -n "$CONFIG ")$([ ! -f "$TOKEN" ] && echo -n "$TOKEN")"
-echo "   SSH in and run: nanobot provider login openai-codex"
-echo "   Then redeploy / restart this service."
+echo "🐈 nanobot: waiting for first-time setup (no config.json yet)."
+echo "   Provide config via either:"
+echo "     • a NANOBOT_CONFIG_JSON Railway variable (full config JSON), or"
+echo "     • SSH in and run: nanobot onboard"
 exec tail -f /dev/null

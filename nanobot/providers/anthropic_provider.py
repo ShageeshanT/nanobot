@@ -11,10 +11,35 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 import json_repair
+from loguru import logger
 
 from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
 
 _ALNUM = string.ascii_letters + string.digits
+
+# Claude Pro/Max subscription ("Claude Code" OAuth) requirements.  A setup-token
+# (``sk-ant-oat…``, produced by ``claude setup-token``) authenticates against the
+# subscription instead of pay-as-you-go API credit.  Anthropic only honors it
+# when the request looks like Claude Code: the token is sent as a Bearer
+# credential, the OAuth beta headers are present, and the system prompt leads
+# with the identity block below (see ``_build_kwargs``).
+_OAUTH_TOKEN_PREFIX = "sk-ant-oat"
+_OAUTH_BETA_HEADER = "claude-code-20250219,oauth-2025-04-20"
+_CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude."
+
+# When running on a Claude subscription the API requires the "Claude Code"
+# identity above, which primes the model as a coding tool. This companion block
+# re-frames it as a general personal assistant. Override with the env var
+# NANOBOT_CLAUDE_AGENT_PROMPT (set it empty to drop the reframe entirely); the
+# workspace SOUL.md / AGENTS.md persona still applies on top of this.
+_DEFAULT_GENERAL_AGENT_PROMPT = (
+    "The Claude Code identity above is only an API requirement. In this deployment you are "
+    "NOT a software-engineering CLI — you are a warm, capable, general-purpose personal "
+    "assistant. Help with anything the person needs: questions, planning, writing, research, "
+    "reminders, and friendly conversation. Be concise and proactive, and use your tools to "
+    "take real action rather than describing what you would do. Follow the persona and "
+    "instructions that come next."
+)
 
 
 def _gen_tool_id() -> str:
@@ -34,23 +59,136 @@ class AnthropicProvider(LLMProvider):
         api_base: str | None = None,
         default_model: str = "claude-sonnet-4-20250514",
         extra_headers: dict[str, str] | None = None,
+        auth_token: str | None = None,
     ):
         super().__init__(api_key, api_base)
         self.default_model = default_model
-        self.extra_headers = extra_headers or {}
+
+        # Detect a Claude Pro/Max subscription credential. Priority:
+        #   1. explicit auth_token / setup-token api_key / env OAuth token
+        #   2. Claude Code CLI credentials file (from `claude login`), with
+        #      automatic token refresh — see claude_code_auth.py
+        oauth_token = self._resolve_oauth_token(api_key, api_base, auth_token)
+        self._creds = None
+        if not oauth_token and self._claude_code_creds_eligible(api_key, api_base):
+            from nanobot.providers.claude_code_auth import (
+                ClaudeCodeCredentials,
+                credentials_available,
+            )
+            if credentials_available():
+                self._creds = ClaudeCodeCredentials()
+                oauth_token = self._creds.peek_access_token()
+                logger.info("AnthropicProvider: using Claude Code `claude login` credentials")
+        self._oauth = bool(oauth_token) or self._creds is not None
+
+        self.extra_headers = dict(extra_headers or {})
+        if self._oauth:
+            self.extra_headers["anthropic-beta"] = self._merge_beta_header(
+                self.extra_headers.get("anthropic-beta"),
+            )
 
         from anthropic import AsyncAnthropic
 
         client_kw: dict[str, Any] = {}
-        if api_key:
+        if oauth_token:
+            client_kw["auth_token"] = oauth_token
+        elif api_key:
             client_kw["api_key"] = api_key
         if api_base:
             client_kw["base_url"] = api_base
-        if extra_headers:
-            client_kw["default_headers"] = extra_headers
+        if self.extra_headers:
+            client_kw["default_headers"] = self.extra_headers
         # Keep retries centralized in LLMProvider._run_with_retry to avoid retry amplification.
         client_kw["max_retries"] = 0
         self._client = AsyncAnthropic(**client_kw)
+        if self._oauth:
+            # Bearer-only: ensure an ambient ANTHROPIC_API_KEY can never add an
+            # x-api-key header alongside the OAuth token.
+            self._client.api_key = None
+
+    @staticmethod
+    def _resolve_oauth_token(
+        api_key: str | None,
+        api_base: str | None,
+        auth_token: str | None,
+    ) -> str | None:
+        """Return the OAuth/subscription token to use, or None for API-key auth.
+
+        Precedence: an explicit ``auth_token`` wins; otherwise a configured
+        ``api_key`` is treated as OAuth only when it is itself a setup-token
+        (``sk-ant-oat…``).  When no key is configured at all, fall back to the
+        ``CLAUDE_CODE_OAUTH_TOKEN`` / ``ANTHROPIC_OAUTH_TOKEN`` environment
+        variables — but only for the real Anthropic endpoint, so the
+        MiniMax/Anthropic-compatible base (and other custom bases) keep using
+        their own API key.
+        """
+        if auth_token:
+            return auth_token
+        if api_key:
+            return api_key if api_key.startswith(_OAUTH_TOKEN_PREFIX) else None
+        base = (api_base or "").lower()
+        if (not base) or "api.anthropic.com" in base:
+            return os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") or os.environ.get(
+                "ANTHROPIC_OAUTH_TOKEN"
+            )
+        return None
+
+    @staticmethod
+    def _claude_code_creds_eligible(api_key: str | None, api_base: str | None) -> bool:
+        """Whether to consult the Claude Code credentials file.
+
+        Only when no key is configured and we are talking to the real Anthropic
+        endpoint — so the MiniMax/Anthropic-compatible base is never affected.
+        """
+        if api_key:
+            return False
+        base = (api_base or "").lower()
+        return (not base) or "api.anthropic.com" in base
+
+    async def _apply_oauth_credentials(self, *, force_refresh: bool = False) -> None:
+        """Refresh (if near expiry) and apply the Claude Code token to the client."""
+        if self._creds is None:
+            return
+        token = await self._creds.get_token(force_refresh=force_refresh)
+        if token:
+            self._client.auth_token = token
+            self._client.api_key = None
+
+    @staticmethod
+    def _general_agent_reframe() -> str | None:
+        """The general-assistant reframe text for OAuth requests (env-overridable)."""
+        override = os.environ.get("NANOBOT_CLAUDE_AGENT_PROMPT")
+        if override is not None:
+            return override.strip() or None
+        return _DEFAULT_GENERAL_AGENT_PROMPT
+
+    @staticmethod
+    def _merge_beta_header(existing: str | None) -> str:
+        """Merge the required OAuth betas into any caller-supplied beta header."""
+        parts: list[str] = []
+        for chunk in (existing or "", _OAUTH_BETA_HEADER):
+            for beta in chunk.split(","):
+                beta = beta.strip()
+                if beta and beta not in parts:
+                    parts.append(beta)
+        return ",".join(parts)
+
+    @classmethod
+    def _with_claude_code_identity(
+        cls, system: str | list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Lead with the required Claude Code identity, then the general-agent
+        reframe, then the caller's system prompt."""
+        blocks: list[dict[str, Any]] = [{"type": "text", "text": _CLAUDE_CODE_IDENTITY}]
+        reframe = cls._general_agent_reframe()
+        if reframe:
+            blocks.append({"type": "text", "text": reframe})
+        if isinstance(system, str):
+            if system:
+                blocks.append({"type": "text", "text": system})
+        elif isinstance(system, list):
+            blocks.extend(system)
+        return blocks
 
     @classmethod
     def _handle_error(cls, e: Exception) -> LLMResponse:
@@ -428,6 +566,13 @@ class AnthropicProvider(LLMProvider):
         system, anthropic_msgs = self._convert_messages(self._sanitize_empty_content(messages))
         anthropic_tools = self._convert_tools(tools)
 
+        # OAuth (Claude Pro/Max subscription) requires the system prompt to lead
+        # with the Claude Code identity block, otherwise Anthropic rejects the
+        # request. Inject it before cache markers are applied so the larger user
+        # prompt (not the identity) still receives the cache_control breakpoint.
+        if self._oauth:
+            system = self._with_claude_code_identity(system)
+
         if supports_caching:
             system, anthropic_msgs, anthropic_tools = self._apply_cache_control(
                 system, anthropic_msgs, anthropic_tools,
@@ -436,9 +581,9 @@ class AnthropicProvider(LLMProvider):
         max_tokens = max(1, max_tokens)
         thinking_enabled = bool(reasoning_effort) and reasoning_effort.lower() != "none"
 
-        # claude-opus-4-7 deprecated the `temperature` parameter entirely — the
-        # API returns 400 if it is present, on any code path.
-        omit_temperature = "opus-4-7" in model_name
+        # claude-opus-4-7 and -4-8 deprecated the `temperature` parameter
+        # entirely — the API returns 400 if it is present, on any code path.
+        omit_temperature = "opus-4-7" in model_name or "opus-4-8" in model_name
 
         kwargs: dict[str, Any] = {
             "model": model_name,
@@ -554,6 +699,7 @@ class AnthropicProvider(LLMProvider):
         reasoning_effort: str | None = None,
         tool_choice: str | dict[str, Any] | None = None,
     ) -> LLMResponse:
+        await self._apply_oauth_credentials()
         kwargs = self._build_kwargs(
             messages, tools, model, max_tokens, temperature,
             reasoning_effort, tool_choice,
@@ -590,6 +736,7 @@ class AnthropicProvider(LLMProvider):
         tool_choice: str | dict[str, Any] | None = None,
         on_content_delta: Callable[[str], Awaitable[None]] | None = None,
     ) -> LLMResponse:
+        await self._apply_oauth_credentials()
         kwargs = self._build_kwargs(
             messages, tools, model, max_tokens, temperature,
             reasoning_effort, tool_choice,

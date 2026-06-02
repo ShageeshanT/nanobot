@@ -12,6 +12,10 @@ RUN apt-get update && \
     apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/*
 
+# Claude Code CLI — lets the operator run `claude login` on the Railway shell to
+# authenticate with a Claude Pro/Max subscription; nanobot reads the stored creds.
+RUN npm install -g @anthropic-ai/claude-code && npm cache clean --force
+
 WORKDIR /app
 
 # Install Python dependencies first (cached layer)
@@ -43,6 +47,10 @@ RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh /usr/local/bin/railway-entrypo
     chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/railway-entrypoint.sh
 
 ENV HOME=/home/nanobot
+
+# Store Claude Code (`claude login`) credentials on the mounted volume so they
+# survive redeploys and are readable by both the CLI and nanobot.
+ENV CLAUDE_CONFIG_DIR=/home/nanobot/.nanobot/claude
 
 # Gateway default port
 EXPOSE 18790

@@ -22,6 +22,15 @@ def configured(tmp_path, monkeypatch):
         "providers": {"minimax": {"apiKey": "secret-mini-123"}},
         "channels": {"telegram": {"enabled": True, "botToken": "tok-abc"}, "discord": {"enabled": False}},
         "modelPresets": {"fast": {"model": "MiniMax-M2", "provider": "minimax"}},
+        "tools": {
+            "mcpServers": {
+                "composio": {
+                    "url": "https://backend.composio.dev/v3/mcp/SID?user_id=U&secret=zzz",
+                    "headers": {"x-api-key": "k"},
+                    "enabledTools": ["*"],
+                }
+            }
+        },
     }
     cfg_path = tmp_path / "config.json"
     cfg_path.write_text(json.dumps(config), encoding="utf-8")
@@ -86,3 +95,37 @@ def test_log_buffer(configured):
     logger.info("dashboard-test-marker")
     out = dashboard.recent_logs(limit=50)
     assert any("dashboard-test-marker" in r["message"] for r in out["logs"])
+
+
+def test_integrations_configured(configured):
+    from nanobot.agent.tools import mcp as mcp_mod
+
+    mcp_mod._MCP_STATUS.clear()
+    out = dashboard.integrations()
+    assert out["mcp_total"] == 1
+    srv = out["mcp_servers"][0]
+    assert srv["name"] == "composio"
+    assert srv["transport"] == "streamableHttp"
+    assert "user_id" not in srv["target"] and "secret" not in srv["target"]  # query dropped
+    assert srv["header_count"] == 1
+    assert srv["status"] == "configured"  # no live connection yet
+    assert any(c["name"] == "Web tools" for c in out["capabilities"])
+
+
+def test_integrations_live_overlay(configured):
+    from nanobot.agent.tools import mcp as mcp_mod
+
+    mcp_mod._MCP_STATUS.clear()
+    mcp_mod._record_mcp_status(
+        "composio", status="connected",
+        tools=[{"name": "GMAIL_SEND", "description": "send"}], registered=1, error=None,
+    )
+    try:
+        out = dashboard.integrations()
+        srv = out["mcp_servers"][0]
+        assert srv["status"] == "connected"
+        assert srv["tool_count"] == 1
+        assert srv["tools"][0]["name"] == "GMAIL_SEND"
+        assert out["mcp_connected"] == 1
+    finally:
+        mcp_mod._MCP_STATUS.clear()

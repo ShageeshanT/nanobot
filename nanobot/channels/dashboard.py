@@ -268,6 +268,94 @@ def model_presets() -> dict[str, Any]:
     return {"presets": presets, "active": active}
 
 
+def _infer_transport(cfg: Any) -> str:
+    t = getattr(cfg, "type", None)
+    if t:
+        return t
+    if getattr(cfg, "command", None):
+        return "stdio"
+    url = getattr(cfg, "url", "") or ""
+    if url:
+        return "sse" if url.rstrip("/").endswith("/sse") else "streamableHttp"
+    return "unknown"
+
+
+def _mcp_target(cfg: Any) -> str:
+    """Human-readable, secret-free server target (command, or URL without query)."""
+    command = getattr(cfg, "command", None)
+    if command:
+        args = getattr(cfg, "args", None) or []
+        return " ".join([command, *[str(a) for a in args]]).strip()
+    url = getattr(cfg, "url", "") or ""
+    if url:
+        import urllib.parse
+
+        try:
+            p = urllib.parse.urlparse(url)
+            base = f"{p.scheme}://{p.netloc}{p.path}"  # drop query (may carry user_id/keys)
+            return base.rstrip("/") or url.split("?", 1)[0]
+        except Exception:
+            return url.split("?", 1)[0]
+    return ""
+
+
+def integrations() -> dict[str, Any]:
+    """MCP servers (nanobot's native toolkit) + built-in tool capabilities.
+
+    Configured servers come from config; live status/tools are overlaid from the
+    running connection registry (``mcp.mcp_status_snapshot``) when available.
+    """
+    from nanobot.agent.tools.mcp import mcp_status_snapshot
+    from nanobot.config.loader import load_config
+
+    config = load_config()
+    snapshot = mcp_status_snapshot()
+    servers: list[dict[str, Any]] = []
+    for name, cfg in (config.tools.mcp_servers or {}).items():
+        live = snapshot.get(name, {})
+        headers = getattr(cfg, "headers", None) or {}
+        env = getattr(cfg, "env", None) or {}
+        tools = live.get("tools") or []
+        servers.append(
+            {
+                "name": name,
+                "transport": _infer_transport(cfg),
+                "target": _mcp_target(cfg),
+                "enabled_tools": list(getattr(cfg, "enabled_tools", []) or []),
+                "header_count": len(headers),
+                "env_count": len(env),
+                "status": live.get("status") or "configured",
+                "tools": tools,
+                "tool_count": len(tools),
+                "registered": live.get("registered"),
+                "error": live.get("error"),
+            }
+        )
+    servers.sort(key=lambda s: s["name"])
+
+    t = config.tools
+    capabilities = [
+        {"name": "Web tools", "enabled": bool(getattr(t.web, "enable", True)),
+         "detail": getattr(getattr(t.web, "search", None), "provider", None)},
+        {"name": "Code execution (shell)", "enabled": bool(getattr(t.exec, "enable", True)), "detail": None},
+        {"name": "Image generation", "enabled": bool(getattr(t.image_generation, "enabled", False)), "detail": None},
+        {"name": "Self-modification (MyTool)", "enabled": bool(getattr(t.my, "enable", True)), "detail": None},
+        {"name": "Filesystem", "enabled": True, "detail": "restricted" if t.restrict_to_workspace else "workspace + paths"},
+        {"name": "Cron / scheduling", "enabled": True, "detail": None},
+        {"name": "Subagents", "enabled": True, "detail": None},
+        {"name": "Cross-channel messaging", "enabled": True, "detail": None},
+    ]
+
+    connected = sum(1 for s in servers if s["status"] == "connected")
+    return {
+        "mcp_servers": servers,
+        "mcp_total": len(servers),
+        "mcp_connected": connected,
+        "capabilities": capabilities,
+        "restrict_to_workspace": bool(t.restrict_to_workspace),
+    }
+
+
 def usage_summary(days: int = 30) -> dict[str, Any]:
     from nanobot.agent.usage import UsageStore
 

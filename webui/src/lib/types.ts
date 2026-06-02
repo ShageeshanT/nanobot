@@ -253,6 +253,34 @@ export interface PresetInfo {
   reasoning_effort: string | null;
 }
 
+export interface McpServerInfo {
+  name: string;
+  transport: string;
+  target: string;
+  enabled_tools: string[];
+  header_count: number;
+  env_count: number;
+  status: string; // connected | connecting | error | configured
+  tools: Array<{ name: string; description?: string }>;
+  tool_count: number;
+  registered?: number | null;
+  error?: string | null;
+}
+
+export interface CapabilityInfo {
+  name: string;
+  enabled: boolean;
+  detail?: string | null;
+}
+
+export interface IntegrationsData {
+  mcp_servers: McpServerInfo[];
+  mcp_total: number;
+  mcp_connected: number;
+  capabilities: CapabilityInfo[];
+  restrict_to_workspace: boolean;
+}
+
 export type ConnectionStatus =
   | "idle"
   | "connecting"

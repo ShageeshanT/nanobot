@@ -611,6 +611,8 @@ class WebSocketChannel(BaseChannel):
             return self._handle_dashboard_simple(request, "config")
         if got == "/api/dashboard/presets":
             return self._handle_dashboard_simple(request, "presets")
+        if got == "/api/dashboard/integrations":
+            return self._handle_dashboard_simple(request, "integrations")
         if got == "/api/dashboard/usage":
             return self._handle_dashboard_usage(request)
         if got == "/api/dashboard/logs":
@@ -957,6 +959,7 @@ class WebSocketChannel(BaseChannel):
             "memory": dashboard.memory_files,
             "config": dashboard.config_redacted,
             "presets": dashboard.model_presets,
+            "integrations": dashboard.integrations,
         }
         return _http_json_response(handlers[kind]())
 

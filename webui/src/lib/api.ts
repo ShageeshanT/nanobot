@@ -4,6 +4,7 @@ import type {
   DashboardChannel,
   DashboardLog,
   DashboardOverview,
+  IntegrationsData,
   MemoryFile,
   PresetInfo,
   ProviderSettingsUpdate,
@@ -244,6 +245,13 @@ export function fetchPresets(
   base: string = "",
 ): Promise<{ presets: PresetInfo[]; active: string | null }> {
   return request(`${base}/api/dashboard/presets`, token);
+}
+
+export function fetchIntegrations(
+  token: string,
+  base: string = "",
+): Promise<IntegrationsData> {
+  return request<IntegrationsData>(`${base}/api/dashboard/integrations`, token);
 }
 
 export function fetchLogs(

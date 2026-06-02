@@ -13,6 +13,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Plug,
+  Puzzle,
   ScrollText,
   Sun,
 } from "lucide-react";
@@ -23,6 +24,7 @@ import {
   ChannelsPanel,
   ConfigPanel,
   CronPanel,
+  IntegrationsPanel,
   LogsPanel,
   MemoryPanel,
   ModelsPanel,
@@ -44,6 +46,7 @@ const NAV: NavItem[] = [
   { key: "sessions", label: "Sessions", icon: MessagesSquare, component: SessionsPanel },
   { key: "models", label: "Models", icon: Cpu, component: ModelsPanel },
   { key: "channels", label: "Channels", icon: Plug, component: ChannelsPanel },
+  { key: "integrations", label: "Integrations", icon: Puzzle, component: IntegrationsPanel },
   { key: "cron", label: "Cron", icon: Clock, component: CronPanel },
   { key: "memory", label: "Memory", icon: FileText, component: MemoryPanel },
   { key: "logs", label: "Logs", icon: ScrollText, component: LogsPanel },

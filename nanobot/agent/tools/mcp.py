@@ -4,6 +4,7 @@ import asyncio
 import os
 import re
 import shutil
+import time
 import urllib.parse
 from contextlib import AsyncExitStack, suppress
 from typing import Any
@@ -13,6 +14,22 @@ from loguru import logger
 
 from nanobot.agent.tools.base import Tool
 from nanobot.agent.tools.registry import ToolRegistry
+
+# Live MCP connection status by server name, surfaced to the dashboard's
+# Integrations panel. Populated by connect_mcp_servers — the running AgentLoop's
+# MCP state isn't otherwise reachable from the gateway HTTP layer.
+_MCP_STATUS: dict[str, dict[str, Any]] = {}
+
+
+def _record_mcp_status(name: str, **fields: Any) -> None:
+    entry = _MCP_STATUS.setdefault(name, {})
+    entry.update(fields)
+    entry["updated_ms"] = int(time.time() * 1000)
+
+
+def mcp_status_snapshot() -> dict[str, dict[str, Any]]:
+    """Return a copy of live MCP connection status keyed by server name."""
+    return {name: dict(info) for name, info in _MCP_STATUS.items()}
 
 # Transient connection errors that warrant a single retry.
 # These typically happen when an MCP server restarts or a network
@@ -478,6 +495,7 @@ async def connect_mcp_servers(
     async def connect_single_server(name: str, cfg) -> tuple[str, AsyncExitStack | None]:
         server_stack = AsyncExitStack()
         await server_stack.__aenter__()
+        _record_mcp_status(name, status="connecting", error=None)
 
         try:
             transport_type = cfg.type
@@ -556,6 +574,10 @@ async def connect_mcp_servers(
             await session.initialize()
 
             tools = await session.list_tools()
+            tool_infos = [
+                {"name": td.name, "description": (getattr(td, "description", "") or "")[:160]}
+                for td in tools.tools
+            ]
             enabled_tools = set(cfg.enabled_tools)
             allow_all_tools = "*" in enabled_tools
             registered_count = 0
@@ -626,6 +648,14 @@ async def connect_mcp_servers(
             logger.info(
                 "MCP server '{}': connected, {} capabilities registered", name, registered_count
             )
+            _record_mcp_status(
+                name,
+                status="connected",
+                transport=transport_type,
+                tools=tool_infos,
+                registered=registered_count,
+                error=None,
+            )
             return name, server_stack
 
         except Exception as e:
@@ -646,6 +676,7 @@ async def connect_mcp_servers(
                     "only JSON-RPC to stdout and sends logs/debug output to stderr instead."
                 )
             logger.exception("MCP server '{}': failed to connect: {}", name, hint)
+            _record_mcp_status(name, status="error", error=(str(e) + hint).strip()[:300])
             with suppress(Exception):
                 await server_stack.aclose()
             return name, None
@@ -660,5 +691,11 @@ async def connect_mcp_servers(
             continue
         if result is not None and result[1] is not None:
             server_stacks[result[0]] = result[1]
+        else:
+            # Skipped (unreachable / no command|url / unknown transport) without
+            # raising — make sure it doesn't linger as "connecting".
+            snap = _MCP_STATUS.get(name, {})
+            if snap.get("status") in (None, "connecting"):
+                _record_mcp_status(name, status="error", error=snap.get("error") or "not connected")
 
     return server_stacks

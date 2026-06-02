@@ -2,13 +2,18 @@ import { useMemo, useState } from "react";
 import {
   Activity,
   Boxes,
+  ChevronDown,
+  ChevronRight,
   Clock,
   Coins,
+  Copy,
   Cpu,
   MessagesSquare,
   Plug,
+  Puzzle,
   RefreshCw,
   Trash2,
+  Wrench,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -19,6 +24,7 @@ import {
   fetchDashboardChannels,
   fetchDashboardConfig,
   fetchDashboardOverview,
+  fetchIntegrations,
   fetchLogs,
   fetchMemoryFiles,
   fetchPresets,
@@ -27,7 +33,7 @@ import {
   listSessions,
   updateSettings,
 } from "@/lib/api";
-import type { CronJobInfo, SettingsPayload } from "@/lib/types";
+import type { CronJobInfo, McpServerInfo, SettingsPayload } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useClient } from "@/providers/ClientProvider";
 import {
@@ -406,6 +412,139 @@ export function ChannelsPanel() {
             </div>
           )}
         </Panel>
+      )}
+    </QueryState>
+  );
+}
+
+// --- Integrations (MCP servers + capabilities) ------------------------------
+
+const COMPOSIO_SNIPPET = `{
+  "tools": {
+    "mcpServers": {
+      "composio": {
+        "url": "https://backend.composio.dev/v3/mcp/<SERVER_ID>?user_id=<USER_ID>",
+        "headers": { "x-api-key": "<COMPOSIO_API_KEY>" }
+      }
+    }
+  }
+}`;
+
+function mcpTone(status: string): "ok" | "warn" | "error" | "muted" {
+  if (status === "connected") return "ok";
+  if (status === "connecting") return "warn";
+  if (status === "error") return "error";
+  return "muted";
+}
+
+function McpServerCard({ s }: { s: McpServerInfo }) {
+  const [open, setOpen] = useState(false);
+  const hasAllowlist = s.enabled_tools.length > 0 && !s.enabled_tools.includes("*");
+  return (
+    <div className="rounded-xl border border-border/60 bg-card/60 p-3.5">
+      <div className="flex items-start gap-3">
+        <StatusDot ok={s.status === "connected"} className="mt-1.5" />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="truncate text-[14px] font-medium text-foreground">{s.name}</span>
+            <Badge tone="muted">{s.transport}</Badge>
+            <Badge tone={mcpTone(s.status)}>{s.status}</Badge>
+          </div>
+          {s.target ? <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">{s.target}</div> : null}
+          {s.error ? <div className="mt-1 text-[11px] text-destructive">{s.error}</div> : null}
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
+            {s.tool_count > 0 ? <span>{s.tool_count} tools</span> : null}
+            {s.header_count > 0 ? <span>· {s.header_count} headers</span> : null}
+            {hasAllowlist ? <span>· allowlist: {s.enabled_tools.join(", ")}</span> : null}
+          </div>
+        </div>
+        {s.tools.length > 0 ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 shrink-0 gap-1 rounded-full text-[12px]"
+            onClick={() => setOpen((v) => !v)}
+          >
+            {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />} tools
+          </Button>
+        ) : null}
+      </div>
+      {open && s.tools.length > 0 ? (
+        <div className="mt-3 max-h-64 space-y-1 overflow-y-auto border-t border-border/40 pt-3">
+          {s.tools.map((tool) => (
+            <div key={tool.name} className="flex items-start gap-2 text-[12px]">
+              <Wrench className="mt-0.5 h-3 w-3 shrink-0 text-muted-foreground/60" aria-hidden />
+              <span className="font-mono text-foreground">{tool.name}</span>
+              {tool.description ? <span className="truncate text-muted-foreground">— {tool.description}</span> : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export function IntegrationsPanel() {
+  const query = useDashboard((t) => fetchIntegrations(t), { intervalMs: 20000 });
+  const [copied, setCopied] = useState(false);
+  const copySnippet = () => {
+    void navigator.clipboard?.writeText(COMPOSIO_SNIPPET).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    });
+  };
+  return (
+    <QueryState query={query}>
+      {(d) => (
+        <div className="space-y-5">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <StatCard label="MCP servers" value={`${d.mcp_connected}/${d.mcp_total}`} icon={Puzzle} sub="connected" />
+            <StatCard label="MCP tools" value={formatNumber(d.mcp_servers.reduce((n, s) => n + s.tool_count, 0))} icon={Wrench} />
+            <StatCard label="Capabilities" value={formatNumber(d.capabilities.filter((c) => c.enabled).length)} icon={Boxes} sub={`of ${d.capabilities.length}`} />
+          </div>
+
+          <Panel title="MCP servers" description="nanobot's native toolkit — connect any MCP server (Composio, GitHub, custom…).">
+            {d.mcp_servers.length === 0 ? (
+              <EmptyState>No MCP servers configured. Add one under tools.mcpServers in config — see below.</EmptyState>
+            ) : (
+              <div className="space-y-2.5">
+                {d.mcp_servers.map((s) => (
+                  <McpServerCard key={s.name} s={s} />
+                ))}
+              </div>
+            )}
+          </Panel>
+
+          <Panel
+            title="Add an integration (Composio & more)"
+            description="Composio exposes 500+ apps as an MCP server — add it (or any MCP server) here."
+            actions={
+              <Button size="sm" variant="outline" className="h-8 rounded-full" onClick={copySnippet}>
+                <Copy className="mr-1.5 h-3.5 w-3.5" /> {copied ? "Copied" : "Copy"}
+              </Button>
+            }
+          >
+            <pre className="overflow-auto rounded-xl border border-border/50 bg-muted/30 p-4 text-[12px] leading-relaxed text-foreground">
+              {COMPOSIO_SNIPPET}
+            </pre>
+            <p className="mt-2 text-[12px] text-muted-foreground">
+              Create a server at composio.dev, paste the URL + API key into config, then restart. It appears above with its live tools.
+            </p>
+          </Panel>
+
+          <Panel title="Built-in capabilities">
+            <div>
+              {d.capabilities.map((c) => (
+                <Row key={c.name}>
+                  <StatusDot ok={c.enabled} />
+                  <span className="flex-1 truncate text-[13px] text-foreground">{c.name}</span>
+                  {c.detail ? <span className="text-[11px] text-muted-foreground">{c.detail}</span> : null}
+                  <Badge tone={c.enabled ? "ok" : "muted"}>{c.enabled ? "on" : "off"}</Badge>
+                </Row>
+              ))}
+            </div>
+          </Panel>
+        </div>
       )}
     </QueryState>
   );

@@ -598,6 +598,24 @@ class WebSocketChannel(BaseChannel):
         if got == "/api/settings/web-search/update":
             return self._handle_settings_web_search_update(request)
 
+        # Dashboard (read-only monitoring surface).
+        if got == "/api/dashboard/overview":
+            return self._handle_dashboard_overview(request)
+        if got == "/api/dashboard/channels":
+            return self._handle_dashboard_simple(request, "channels")
+        if got == "/api/dashboard/cron":
+            return self._handle_dashboard_simple(request, "cron")
+        if got == "/api/dashboard/memory":
+            return self._handle_dashboard_simple(request, "memory")
+        if got == "/api/dashboard/config":
+            return self._handle_dashboard_simple(request, "config")
+        if got == "/api/dashboard/presets":
+            return self._handle_dashboard_simple(request, "presets")
+        if got == "/api/dashboard/usage":
+            return self._handle_dashboard_usage(request)
+        if got == "/api/dashboard/logs":
+            return self._handle_dashboard_logs(request)
+
         m = re.match(r"^/api/sessions/([^/]+)/messages$", got)
         if m:
             return self._handle_session_messages(request, m.group(1))
@@ -916,6 +934,57 @@ class WebSocketChannel(BaseChannel):
         if changed:
             save_config(config)
         return _http_json_response(self._settings_payload(requires_restart=False))
+
+    # -- Dashboard handlers -------------------------------------------------
+
+    def _handle_dashboard_overview(self, request: WsRequest) -> Response:
+        if not self._check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        from nanobot.channels import dashboard
+
+        return _http_json_response(
+            dashboard.overview(self._session_manager, len(self._conn_chats))
+        )
+
+    def _handle_dashboard_simple(self, request: WsRequest, kind: str) -> Response:
+        if not self._check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        from nanobot.channels import dashboard
+
+        handlers = {
+            "channels": dashboard.channels_status,
+            "cron": dashboard.cron_jobs,
+            "memory": dashboard.memory_files,
+            "config": dashboard.config_redacted,
+            "presets": dashboard.model_presets,
+        }
+        return _http_json_response(handlers[kind]())
+
+    def _handle_dashboard_usage(self, request: WsRequest) -> Response:
+        if not self._check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        from nanobot.channels import dashboard
+
+        days = _query_first(_parse_query(request.path), "days")
+        try:
+            days_i = max(1, min(365, int(days))) if days else 30
+        except ValueError:
+            days_i = 30
+        return _http_json_response(dashboard.usage_summary(days=days_i))
+
+    def _handle_dashboard_logs(self, request: WsRequest) -> Response:
+        if not self._check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        from nanobot.channels import dashboard
+
+        query = _parse_query(request.path)
+        limit = _query_first(query, "limit")
+        level = _query_first(query, "level")
+        try:
+            limit_i = max(1, min(2000, int(limit))) if limit else 300
+        except ValueError:
+            limit_i = 300
+        return _http_json_response(dashboard.recent_logs(limit=limit_i, level=level))
 
     @staticmethod
     def _is_webui_session_key(key: str) -> bool:

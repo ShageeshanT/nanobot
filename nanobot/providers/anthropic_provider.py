@@ -46,6 +46,21 @@ def _gen_tool_id() -> str:
     return "toolu_" + "".join(secrets.choice(_ALNUM) for _ in range(22))
 
 
+# Anthropic requires tool-call ids to match ^[a-zA-Z0-9_-]+$. Cross-provider
+# history can carry ids that violate this — e.g. the OpenAI/Codex Responses API
+# emits ``call_…|fc_…`` ids whose ``|`` separator Anthropic rejects, which 400s
+# every turn (a non-fallbackable error, so it does not even fail over). Replace
+# each offending character deterministically so that a tool_use id and its
+# matching tool_result id always map to the same sanitized value.
+_TOOL_ID_BAD_CHARS = re.compile(r"[^a-zA-Z0-9_-]")
+
+
+def _sanitize_tool_id(tool_id: str | None) -> str:
+    if not tool_id:
+        return ""
+    return _TOOL_ID_BAD_CHARS.sub("_", tool_id)
+
+
 class AnthropicProvider(LLMProvider):
     """LLM provider using the native Anthropic SDK for Claude models.
 
@@ -303,7 +318,7 @@ class AnthropicProvider(LLMProvider):
         content = msg.get("content")
         block: dict[str, Any] = {
             "type": "tool_result",
-            "tool_use_id": msg.get("tool_call_id", ""),
+            "tool_use_id": _sanitize_tool_id(msg.get("tool_call_id", "")),
         }
         if isinstance(content, list):
             block["content"] = AnthropicProvider._convert_user_content(content)
@@ -341,7 +356,7 @@ class AnthropicProvider(LLMProvider):
                 args = json_repair.loads(args)
             blocks.append({
                 "type": "tool_use",
-                "id": tc.get("id") or _gen_tool_id(),
+                "id": _sanitize_tool_id(tc.get("id")) or _gen_tool_id(),
                 "name": func.get("name", ""),
                 "input": args,
             })

@@ -140,6 +140,119 @@ export interface SlashCommand {
   argHint?: string;
 }
 
+// --- Dashboard ------------------------------------------------------------
+
+export interface UsageTotals {
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+  turns: number;
+}
+
+export interface UsageByModel extends UsageTotals {
+  model: string;
+}
+
+export interface UsageDayPoint extends UsageTotals {
+  date: string;
+}
+
+export interface UsageRecentRow {
+  ts: number;
+  model: string;
+  session_key: string;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+}
+
+export interface UsageSummary {
+  totals: Partial<UsageTotals>;
+  by_model: UsageByModel[];
+  series: UsageDayPoint[];
+  recent: UsageRecentRow[];
+  window_days: number;
+}
+
+export interface DashboardChannel {
+  name: string;
+  enabled: boolean;
+  configured: boolean;
+  type?: string | null;
+}
+
+export interface DashboardOverview {
+  version: string;
+  uptime_s: number;
+  active_connections: number;
+  model: string;
+  provider: string;
+  reasoning_effort: string | null;
+  counts: {
+    sessions: number;
+    webui_sessions: number;
+    channels_enabled: number;
+    channels_total: number;
+    providers_configured: number;
+    cron_jobs: number;
+  };
+  usage: UsageSummary;
+  recent_sessions: Array<{
+    key: string;
+    title?: string;
+    preview?: string;
+    created_at?: string | null;
+    updated_at?: string | null;
+  }>;
+  channels: DashboardChannel[];
+}
+
+export interface CronJobInfo {
+  id: string;
+  name: string;
+  enabled: boolean;
+  schedule: {
+    kind: string;
+    expr?: string | null;
+    every_ms?: number | null;
+    at_ms?: number | null;
+    tz?: string | null;
+  };
+  message?: string;
+  channel?: string | null;
+  deliver?: boolean;
+  next_run_at_ms?: number | null;
+  last_run_at_ms?: number | null;
+  last_status?: string | null;
+  last_error?: string | null;
+  created_at_ms?: number;
+}
+
+export interface MemoryFile {
+  name: string;
+  exists: boolean;
+  content: string;
+  path: string;
+}
+
+export interface DashboardLog {
+  ts: number;
+  level: string;
+  name: string;
+  message: string;
+}
+
+export interface PresetInfo {
+  name: string;
+  model: string;
+  provider: string;
+  max_tokens: number;
+  context_window_tokens: number;
+  temperature: number;
+  reasoning_effort: string | null;
+}
+
 export type ConnectionStatus =
   | "idle"
   | "connecting"

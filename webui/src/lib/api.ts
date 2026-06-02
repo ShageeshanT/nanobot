@@ -1,9 +1,16 @@
 import type {
   ChatSummary,
+  CronJobInfo,
+  DashboardChannel,
+  DashboardLog,
+  DashboardOverview,
+  MemoryFile,
+  PresetInfo,
   ProviderSettingsUpdate,
   SettingsPayload,
   SettingsUpdate,
   SlashCommand,
+  UsageSummary,
   WebSearchSettingsUpdate,
 } from "./types";
 
@@ -185,4 +192,68 @@ export async function updateWebSearchSettings(
     `${base}/api/settings/web-search/update?${query}`,
     token,
   );
+}
+
+// --- Dashboard ------------------------------------------------------------
+
+export function fetchDashboardOverview(
+  token: string,
+  base: string = "",
+): Promise<DashboardOverview> {
+  return request<DashboardOverview>(`${base}/api/dashboard/overview`, token);
+}
+
+export function fetchUsage(
+  token: string,
+  days: number = 30,
+  base: string = "",
+): Promise<UsageSummary> {
+  return request<UsageSummary>(`${base}/api/dashboard/usage?days=${days}`, token);
+}
+
+export function fetchDashboardChannels(
+  token: string,
+  base: string = "",
+): Promise<{ channels: DashboardChannel[]; enabled_count: number }> {
+  return request(`${base}/api/dashboard/channels`, token);
+}
+
+export function fetchCronJobs(
+  token: string,
+  base: string = "",
+): Promise<{ jobs: CronJobInfo[] }> {
+  return request(`${base}/api/dashboard/cron`, token);
+}
+
+export function fetchMemoryFiles(
+  token: string,
+  base: string = "",
+): Promise<{ files: MemoryFile[] }> {
+  return request(`${base}/api/dashboard/memory`, token);
+}
+
+export function fetchDashboardConfig(
+  token: string,
+  base: string = "",
+): Promise<{ config: unknown; config_path: string }> {
+  return request(`${base}/api/dashboard/config`, token);
+}
+
+export function fetchPresets(
+  token: string,
+  base: string = "",
+): Promise<{ presets: PresetInfo[]; active: string | null }> {
+  return request(`${base}/api/dashboard/presets`, token);
+}
+
+export function fetchLogs(
+  token: string,
+  limit: number = 300,
+  level?: string,
+  base: string = "",
+): Promise<{ logs: DashboardLog[]; count: number }> {
+  const query = new URLSearchParams();
+  query.set("limit", String(limit));
+  if (level) query.set("level", level);
+  return request(`${base}/api/dashboard/logs?${query}`, token);
 }

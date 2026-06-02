@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { DeleteConfirm } from "@/components/DeleteConfirm";
 import { Sidebar } from "@/components/Sidebar";
 import { SettingsView } from "@/components/settings/SettingsView";
+import { DashboardView } from "@/components/dashboard/DashboardView";
 import { ThreadShell } from "@/components/thread/ThreadShell";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { preloadMarkdownText } from "@/components/MarkdownText";
@@ -36,7 +37,7 @@ type BootState =
 const SIDEBAR_STORAGE_KEY = "nanobot-webui.sidebar";
 const RESTART_STARTED_KEY = "nanobot-webui.restartStartedAt";
 const SIDEBAR_WIDTH = 272;
-type ShellView = "chat" | "settings";
+type ShellView = "chat" | "settings" | "dashboard";
 
 function AuthForm({
   failed,
@@ -324,6 +325,11 @@ function Shell({ onModelNameChange, onLogout }: { onModelNameChange: (modelName:
     setMobileSidebarOpen(false);
   }, []);
 
+  const onOpenDashboard = useCallback(() => {
+    setView("dashboard");
+    setMobileSidebarOpen(false);
+  }, []);
+
   const onBackToChat = useCallback(() => {
     setView("chat");
     setMobileSidebarOpen(false);
@@ -408,9 +414,9 @@ function Shell({ onModelNameChange, onLogout }: { onModelNameChange: (modelName:
     : t("app.brand");
 
   useEffect(() => {
-    if (view === "settings") {
+    if (view === "settings" || view === "dashboard") {
       document.title = t("app.documentTitle.chat", {
-        title: t("settings.sidebar.title"),
+        title: view === "dashboard" ? "Dashboard" : t("settings.sidebar.title"),
       });
       return;
     }
@@ -428,8 +434,9 @@ function Shell({ onModelNameChange, onLogout }: { onModelNameChange: (modelName:
     onRequestDelete: (key: string, label: string) =>
       setPendingDelete({ key, label }),
     onOpenSettings,
+    onOpenDashboard,
   };
-  const showMainSidebar = view !== "settings";
+  const showMainSidebar = view === "chat";
 
   return (
     <div className="relative flex h-full w-full overflow-hidden">
@@ -475,7 +482,7 @@ function Shell({ onModelNameChange, onLogout }: { onModelNameChange: (modelName:
         <div
           className={cn(
             "absolute inset-0 flex flex-col",
-            view === "settings" && "invisible pointer-events-none",
+            view !== "chat" && "invisible pointer-events-none",
           )}
         >
           <ThreadShell
@@ -501,6 +508,11 @@ function Shell({ onModelNameChange, onLogout }: { onModelNameChange: (modelName:
               onRestart={onRestart}
               isRestarting={isRestarting}
             />
+          </div>
+        )}
+        {view === "dashboard" && (
+          <div className="absolute inset-0 flex flex-col">
+            <DashboardView theme={theme} onToggleTheme={toggle} onBackToChat={onBackToChat} />
           </div>
         )}
       </main>

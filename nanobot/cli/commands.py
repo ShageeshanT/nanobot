@@ -672,6 +672,9 @@ def _run_gateway(
 
     port = port if port is not None else config.gateway.port
 
+    from nanobot.channels.dashboard import install_log_buffer
+    install_log_buffer()
+
     console.print(f"{__logo__} Starting nanobot gateway version {__version__} on port {port}...")
     sync_workspace_templates(config.workspace_path)
     bus = MessageBus()

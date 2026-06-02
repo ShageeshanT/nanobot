@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import {
+  LayoutDashboard,
   Menu,
   Search,
   Settings,
@@ -22,6 +23,7 @@ interface SidebarProps {
   onSelect: (key: string) => void;
   onRequestDelete: (key: string, label: string) => void;
   onOpenSettings: () => void;
+  onOpenDashboard: () => void;
   onCollapse: () => void;
 }
 
@@ -118,6 +120,15 @@ export function Sidebar(props: SidebarProps) {
       </div>
       <Separator className="bg-sidebar-border/50" />
       <div className="space-y-1 px-2.5 py-2.5 text-xs">
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={props.onOpenDashboard}
+          className="h-8 w-full justify-start gap-2 rounded-full px-2.5 text-[12.5px] font-medium text-sidebar-foreground/85 hover:bg-sidebar-accent/75 hover:text-sidebar-foreground"
+        >
+          <LayoutDashboard className="h-3.5 w-3.5" aria-hidden />
+          Dashboard
+        </Button>
         <Button
           type="button"
           variant="ghost"
